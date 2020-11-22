@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"strconv"
+	"time"
 )
 
 //////////////////////////////////////////////////////////////
@@ -36,6 +37,7 @@ func (i *checkout) register(o observer) bool {
 		// checkout queue is full
     return false
   } else {
+		fmt.Println(o.getID() + " Added")
     i.observerList = append(i.observerList, o)
   }
   i.mux.Unlock()
@@ -71,6 +73,7 @@ func (i *checkout) openCheckout() {
 				i.observerList[0].update()
 				i.deregister()
 			}else {
+				time.Sleep(1 * time.Second)
 				fmt.Println("Waiting for Customer")
 			}
 		}
@@ -105,10 +108,12 @@ func (c *customerAgent) activateCustomer(man *manager) {
 				fmt.Println("True " + c.getID())
 				break
 			}else {
-				fmt.Println("False " + c.getID())
+
+
+				//fmt.Println("False " + c.getID())
 
 				// will need timer here
-				break
+				//break
 			}
 	}
 }
@@ -141,10 +146,21 @@ type manager struct {
 }
 
 
+// what does manager need from user? == number of chekouts (1 to 8) ; types of checkouts?
+
+// total wait time for each customer   &&   average customer wait time
+// total products processed  &&  average products per trolley
+//
+// total utilization for each checkout  ///// time spent with no customers?
+// average checkout utilisation
+
+// The number of lost customers (Customers will leave the store if they need to join a queue more than six deep)
 
 func newManager(checkouts [] *checkout) *manager {
     return &manager{
         checkouts: checkouts,
+				 // checkoutTypes []int
+        // checkoutTypes: checkoutTypes,
     }
 }
 
@@ -152,6 +168,12 @@ func newManager(checkouts [] *checkout) *manager {
 // TODO: Use all checkouts
 func (m *manager) lookingForQueue(customer *customerAgent) bool {
 
+	/// try to assign customer to a queue, if unable to, return false
+
+		// for i range := m.checkouts {
+			// Need if statement..... so that we do not queue in more than one
+		//fmt.Println(m.checkouts[0].register(customer))
+		// }
 		return m.checkouts[0].register(customer)
 }
 
@@ -171,15 +193,22 @@ func main() {
 	// fmt.Println(manager.checkouts[1].queueMaxLength)
 	// fmt.Println(len(manager.checkouts))
 
-	// manager.checkouts[0].openCheckout()
+ 	go manager.checkouts[0].openCheckout()
 
 	// Temporary weather agent construct //////////////////////////////
-	for i:=0 ;i < 10; i++ {
+	for i:=0 ;i < 20; i++ {
 
 		customer := &customerAgent{id: "a"+ strconv.Itoa(i)}
-		customer.activateCustomer(manager)
+		go customer.activateCustomer(manager)
 	}
 
 
+	// Output to show that program is not frozen.
+	epochs := 10
+
+	for i:=0; i<epochs; i++ {
+		time.Sleep(1 * time.Second)
+		fmt.Println(".")
+	}
 }
 
