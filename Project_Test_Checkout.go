@@ -38,7 +38,7 @@ func (i *checkout) register(o observer) bool {
 		// checkout queue is full
 		return false
 	} else {
-		fmt.Println(o.getID() + " Added")
+		//fmt.Println(o.getID() + " Added")
 		i.observerList = append(i.observerList, o)
 	}
 	i.mux.Unlock()
@@ -69,6 +69,7 @@ func removeFirstElementFromslice(observerList []observer) []observer {
 func (i *checkout) openCheckout() {
 	// need a wait function that waits based on itemcount times checkout speed
 	for {
+		time.Sleep(1 * time.Second)
 		if len(i.observerList) > 0 {
 			i.observerList[0].update()
 			i.deregister()
@@ -88,23 +89,25 @@ type observer interface {
 
 type customerAgent struct {
 	id             string
-	waitTime       time.Duration
+	waitTime       string
 	patienceTime   time.Duration
 	productsAmount int
+	timeStart      time.Time
+	elapsedTime    time.Duration
 }
 
 func (c *customerAgent) update() {
 
 	//// this should report results #time #itemnumber etc.
 	//// and destroy agent #AgentWorkDone
-	fmt.Println("Notify Customer")
+	fmt.Println("Notify Customer " + c.getID())
 }
 
 func (c *customerAgent) getID() string {
 	return c.id
 }
 
-func (c *customerAgent) getProductsAmount(userInputMin, userInputMax int) int {
+func (c *customerAgent) genProductsAmount(userInputMin, userInputMax int) int {
 
 	rand.Seed(time.Now().UnixNano())
 	c.productsAmount = rand.Intn((userInputMax - userInputMin + 1) + userInputMin)
@@ -113,23 +116,31 @@ func (c *customerAgent) getProductsAmount(userInputMin, userInputMax int) int {
 }
 
 func (c *customerAgent) activateCustomer(man *manager) {
+
+	c.timeStart = time.Now()
+
 	for {
 		if man.lookingForQueue(c) {
 			fmt.Println("True " + c.getID())
+
 			break
 		} else {
-
-			println("False")
-			c.patienceTime = 30 * time.Second
-			timeStart := time.Now()
+			//println("still looking" + c.getID())
+			c.patienceTime = 10 * time.Second
 			timePassed := time.Now()
-			elapsed := (timePassed.Sub(timeStart)) / time.Second
-			if elapsed >= c.patienceTime {
-				c.waitTime = elapsed
+			c.elapsedTime = (timePassed.Sub(c.timeStart))
+			elapsedString := c.elapsedTime.String()
+			println("still looking" + c.getID() + " " + elapsedString)
+			if c.elapsedTime >= c.patienceTime {
+				c.waitTime = elapsedString
+				println("cutomer leaves" + " " + c.getID())
 
 				break
 			}
+
 		}
+		time.Sleep(2 * time.Second)
+
 	}
 
 }
@@ -204,14 +215,14 @@ func main() {
 	go manager.checkouts[0].openCheckout()
 
 	// Temporary weather agent construct //////////////////////////////
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 
 		customer := &customerAgent{id: "a" + strconv.Itoa(i)}
 		go customer.activateCustomer(manager)
 	}
 
 	// Output to show that program is not frozen.
-	epochs := 10
+	epochs := 30
 
 	for i := 0; i < epochs; i++ {
 		time.Sleep(1 * time.Second)
