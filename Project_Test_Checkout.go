@@ -1,3 +1,8 @@
+/// @auth
+/// Kristofs Flaks 15169081
+/// Jakub Stanczyk 16151011
+/// Jonathan Ryley 17244501
+
 package main
 
 import (
@@ -10,7 +15,7 @@ import (
 	"os"
 )
 
-///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 type subject interface {
 	register(Observer observer) bool
@@ -21,6 +26,9 @@ type checkout struct {
 	observerList   []observer
 	name           string
 	queueMaxLength int
+	open           bool
+	cMinSpeed				 float64
+	cMaxSpeed				 float64
 	mux            sync.Mutex
 }
 
@@ -28,6 +36,7 @@ func newCheckout(name string, queueMaxLength int) *checkout {
 	return &checkout{
 		name:           name,
 		queueMaxLength: queueMaxLength,
+		open:						true,
 	}
 }
 
@@ -62,24 +71,31 @@ func removeFirstElementFromslice(observerList []observer) []observer {
 	return observerList
 }
 
-func (i *checkout) openCheckout(){//channel *chan float64) {
+func (c *checkout) openCheckout(channel *chan float64) {
 	// need a wait function that waits based on itemcount times checkout speed
-	//TODO:close checkout function needed
 
 	// call to open checkout happens before customers are created,
 	// wait for a second so that some customers can spawn
 	time.Sleep(1 * time.Second)
-	for {
-		if len(i.observerList) > 0 {
-			i.observerList[0].update()
-			i.deregister()
+
+	for c.open {
+		if len(c.observerList) > 0 {
+			// c.observerList[0].itemcount *
+			time.Sleep(1 * time.Millisecond) //TODO: here #####################################
+			c.observerList[0].update()
+			c.deregister()
 		} else {
-
-			time.Sleep(1 * time.Second)
-
 			//send message to manager
+			*channel <- 1.0
+			time.Sleep(1 * time.Second)
 		}
 	}
+
+	close(*channel)
+}
+
+func (i *checkout) closeCheckout() {
+	i.open = false
 }
 
 /////////////////////////////////////////////////////////////////
@@ -157,7 +173,7 @@ type customerFeedbackChannels struct {
 type manager struct {
 	checkouts                []*checkout
 	checkoutTypes            []int
-	checkoutFeedbackChannels []*chan float64
+	checkoutFeedbackChannels [8]chan float64
 	customerFeedbackChannels *customerFeedbackChannels
 	checkoutLenght           int
 }
@@ -166,7 +182,7 @@ func newManager(checkouts []*checkout) *manager {
 	// hard coded 8 because we have a max 8 checkouts and Go dosent like non constant variables
 	channelArray := [8]chan float64{}
 	for i := 0; i < len(checkouts); i++ {
-		channelArray[i] = make(chan float64)
+		channelArray[i] = make(chan float64, 100000) /// buffered channels for total
 	}
 
 	return &manager{
@@ -174,7 +190,7 @@ func newManager(checkouts []*checkout) *manager {
 		//// will need to change buffer size to match number of customers spawned
 		customerFeedbackChannels: newFeedbackListeners(1000),
 		checkoutLenght:           len(checkouts),
-
+		checkoutFeedbackChannels: channelArray,
 		// checkoutTypes []int
 		// checkoutTypes: checkoutTypes,
 	}
@@ -253,9 +269,9 @@ func (cf *customerFeedback) printData(){
 
 	avgCustWait, avgProdPerT := cf.calcDataAverages()
 
-	fmt.Printf("\nTotal wait time for each customer:   %.0f \tseconds", (cf.waitTime/10000000))
+	fmt.Printf("\nTotal wait time for each customer:   %.2f\tseconds", (cf.waitTime/10000000))
+	fmt.Printf("\nAverage customer wait time:          %.2f\tseconds", avgCustWait)
 	fmt.Printf("\nTotal products processed:            %d", cf.productsProcessedTotal)
-	fmt.Printf("\nAverage customer wait time:          %.0f \tseconds", avgCustWait)
 	fmt.Printf("\nAverage products per trolley:        %.2f", avgProdPerT)
 	fmt.Printf("\nThe number of lost customers:        %d", cf.lostCustomers)
 	// println("\n(Customers will leave the store if they need to join a queue more than six deep)")
@@ -304,17 +320,18 @@ func (weather *weather) endDay() {
 	weather.stop = false
 }
 
-//////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////
 
 func main() {
 /////////////////// User Input Section /////////////////////////////////////
 	var checkoutInput int64 = 0
-  var customerInput int64 = 0
-  var productInput float64 = 0.0
+  var customerEntryRate int64 = 0
+  var checkoutSpeed float64 = 0.0
   var rateInput int64 = 0
+	var minProdRange int64 = 0
+	var maxProdRange int64 = 0
 
-	println(productInput)
-	println(checkoutInput + customerInput + rateInput)
+	// the number of products for each trolley to be generated randomly within a user specified range (1 to 200).
 
     scanner := bufio.NewScanner(os.Stdin)
     print("Enter Number of checkouts from 1 - 8:")
@@ -328,70 +345,95 @@ func main() {
         }
     }
 
-    print("Enter number of cusomers between 0 to 200: ")
+    print("Enter min range of products for each trolley, 0 to 199: ")
     for scanner.Scan() {
         input, _ := strconv.ParseInt(scanner.Text(), 10, 64)
-        if input > 200 {
+        if input > 199 {
 
-            print("Incorrect Input, can only accept number of costumers between 0 to 200: ")
+            print("Incorrect Input, can only accept number from 0 to 199: ")
         } else {
-            break
+					minProdRange = input
+					break
         }
     }
 
-    print("Enter time per product at checkout from .5 to 6: ")
+		print("Enter max range of products for each trolley, 1 to 200: ")
+		for scanner.Scan() {
+				input, _ := strconv.ParseInt(scanner.Text(), 10, 64)
+				if input > 200 && input >= 1{
+
+						print("Incorrect Input, can only accept number from 1 to 200: ")
+				} else {
+					maxProdRange = input
+					break
+				}
+		}
+
+    print("Enter checkout speed, from .5 to 6: ")
     for scanner.Scan() {
         input, _ := strconv.ParseFloat(scanner.Text(), 64)
         if input < 0.5 || input > 6 {
             print("Incorrect Input, can only time between .5 to 6: ")
         } else {
+					checkoutSpeed = input
             break
         }
     }
 
-    print("Enter rate of customer to be taken from 20 to 60: ")
+    print("Enter rate of customer spawn, from 20 to 60: ")
     for scanner.Scan() {
         input, _ := strconv.ParseInt(scanner.Text(), 10, 64)
         if input < 20 || input > 60 {
-            print("Incorrect Input, can only accept the rate of customers between 20 to 60: ")
+            print("Incorrect Input, can only accept number in range of 20 to 60: ")
         } else {
-            break
+					customerEntryRate = input
+					break
         }
     }
+
+		println(checkoutSpeed)
+		println( customerEntryRate + minProdRange + maxProdRange + rateInput)
 ////////////////////////////////////////////////////////////////////////////////
-//checkouts := []*checkout{newCheckout("Checkout one", 5), newCheckout("Checkout two", 5), newCheckout("Checkout three", 5), newCheckout("Checkout four", 5), newCheckout("Checkout five", 5)}
 	var wg sync.WaitGroup
 
 	checkouts := [8]*checkout {}
 
 	var i int64 = 0
 	for i=0; i < checkoutInput; i++ {
-		checkouts[i] = newCheckout("Checkout", 6)
+		checkouts[i] = newCheckout(strconv.FormatInt((i + 1), 10), 6)
 	}
-	println("############### Begin ####################")
+	println("####################### Begin #########################")
 
   checkoutSlice := checkouts[:checkoutInput]
 
 	manager := newManager(checkoutSlice)
-	weather := newWeatherAgent(1)
-		print(int(rateInput))
+
+	///TODO: #####################################################################
+	weather := newWeatherAgent(10)
+	//	print(int(rateInput))
 
 	for i := 0; i < manager.checkoutLenght; i++ {
-		go manager.checkouts[i].openCheckout()
+		go manager.checkouts[i].openCheckout(&manager.checkoutFeedbackChannels[i])
 	}
 
 	go weather.generateCustomers(manager, wg)
 
 	/// 18 hours open time 6 hours closed
 	epochs := 18 // duration of simulation
+	println("")
 	for i := 0; i < epochs; i++ {
 		time.Sleep(1 * time.Second)
-		fmt.Println(".") // Output to show that program is not frozen.
+		fmt.Print(".") // Output to show that program is not frozen.
 	}
 	// need the checkout printlins
 	weather.endDay()
 	// println("store closed")
-	println("############### Gather results ####################")
+
+	//for i := 0; i < manager.checkoutLenght; i++ {
+		//manager.checkouts[i].closeCheckout()
+	//}
+
+	println("\n################## Gather results #####################")
 
 	//// sometimes misses a few generatedCustomers being added to wait WaitGroup
 	//// therefore we wait a second for the endDay() to finish its call before
@@ -402,12 +444,33 @@ func main() {
 	/// #Safety
 	wg.Wait()
 
-	// will be called before printData() is called
-	// fmt.Printf("\nTotal utilization for each checkout: %d", -1)
-	// fmt.Printf("\nAverage checkout utilisation:        %d", 1)
+
+	////TODO: send close to checkout channel and end loop
+	for i := 0; i < manager.checkoutLenght; i++ {
+		manager.checkouts[i].closeCheckout()
+	}
+
+	var localTotal float64 = 0.0
+	var total float64 = 0.0
+	var average float64 = 0.0
+	//println("Total utilization for each checkout:")
+	for i := 0; i < manager.checkoutLenght; i++ {
+		localTotal = 0.0
+		for j := range manager.checkoutFeedbackChannels[i] {
+			localTotal = localTotal + j
+		}
+		localTotal = (localTotal * 10)
+		total = total + localTotal
+		fmt.Printf("\nCheckout %s waiting for customers:     %.0f\tseconds", manager.checkouts[i].name ,localTotal)
+	}
+	//for each checkout
+	average = total/float64(manager.checkoutLenght)
+	fmt.Printf("\nTotal checkout utilization:          %.0f\tseconds", total)
+	fmt.Printf("\nAverage checkout utilisation:        %.0f\tseconds", average)
 
 	feedbackData := newFeedbackTable()
 	feedbackData.collectDataFromManager(manager)
 	feedbackData.printData()
 
 }
+
