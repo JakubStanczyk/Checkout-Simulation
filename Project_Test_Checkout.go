@@ -13,15 +13,13 @@ import (
 type subject interface {
 	register(Observer observer) bool
 	deregister(Observer observer)
-	// notify()
 }
 
 type checkout struct {
 	observerList   []observer
 	name           string
 	queueMaxLength int
-	// checkoutType int
-	mux sync.Mutex
+	mux            sync.Mutex
 }
 
 func newCheckout(name string, queueMaxLength int) *checkout {
@@ -38,14 +36,13 @@ func (i *checkout) register(o observer) bool {
 		// checkout queue is full
 		return false
 	} else {
-		//fmt.Println(o.getID() + " Added")
+
 		i.observerList = append(i.observerList, o)
 	}
 	i.mux.Unlock()
 	return true
 }
 
-// rename to leaveCheckout? or customerLeaves? or customerRemove?
 func (i *checkout) deregister() {
 	i.observerList = removeFirstElementFromslice(i.observerList)
 }
@@ -64,10 +61,9 @@ func removeFirstElementFromslice(observerList []observer) []observer {
 	return observerList
 }
 
-// This needs to become a timed removal of the first item in checkout
-// rename to processCustomers?
 func (i *checkout) openCheckout() {
 	// need a wait function that waits based on itemcount times checkout speed
+	//TODO:close checkout function neeted
 	for {
 		time.Sleep(1 * time.Second)
 		if len(i.observerList) > 0 {
@@ -75,7 +71,8 @@ func (i *checkout) openCheckout() {
 			i.deregister()
 		} else {
 			time.Sleep(1 * time.Second)
-			fmt.Println("Waiting for Customer")
+
+			//send message to manager
 		}
 	}
 }
@@ -88,22 +85,25 @@ type observer interface {
 }
 
 type customerAgent struct {
-	id             string
-	waitTime       string
-	patienceTime   time.Duration
-	productsAmount int
-	timeStart      time.Time
-	elapsedTime    time.Duration
+	id                      string
+	waitTime                float64
+	patienceTime            time.Duration
+	productsAmount          int
+	timeStart               time.Time
+	elapsedTime             time.Duration
+	customerFeedbackPointer *customerFeedbackChannels
 }
 
 func (c *customerAgent) update() {
+	//customer leaves shop update manager
 
-	//// this should report results #time #itemnumber etc.
-	//// and destroy agent #AgentWorkDone
-	fmt.Println("Notify Customer " + c.getID())
+	c.customerFeedbackPointer.productsProcessed <- c.productsAmount
+	c.customerFeedbackPointer.waitTime <- c.waitTime
+	c.customerFeedbackPointer.customerProcessed <- 1
 }
 
 func (c *customerAgent) getID() string {
+
 	return c.id
 }
 
@@ -116,47 +116,44 @@ func (c *customerAgent) genProductsAmount(userInputMin, userInputMax int) int {
 }
 
 func (c *customerAgent) activateCustomer(man *manager) {
-
+	//genProductsAmount() needs to be tweaked for user input
 	c.timeStart = time.Now()
+	c.customerFeedbackPointer = man.customerFeedbackChannels
 
 	for {
 		if man.lookingForQueue(c) {
-			fmt.Println("True " + c.getID())
+			//found a Q
 
 			break
 		} else {
-			//println("still looking" + c.getID())
-			c.patienceTime = 10 * time.Second
+			c.patienceTime = 5 * time.Second //TODO change patience to be random gen or userin
 			timePassed := time.Now()
 			c.elapsedTime = (timePassed.Sub(c.timeStart))
-			elapsedString := c.elapsedTime.String()
-			println("still looking" + c.getID() + " " + elapsedString)
 			if c.elapsedTime >= c.patienceTime {
-				c.waitTime = elapsedString
+				c.waitTime = float64(c.elapsedTime)
+				c.customerFeedbackPointer.lostCustomers <- 1
 				println("cutomer leaves" + " " + c.getID())
 
 				break
 			}
 
 		}
-		time.Sleep(2 * time.Second)
-
+		// can add sleep to decrese the instensity of calls
 	}
-
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////<--------------------------------------------
+///////////////////////////////////////////////////////////////////////////////////////////////
 
 type customerFeedbackChannels struct {
 	lostCustomers     chan int
-	waitTime          chan int
+	waitTime          chan float64
 	productsProcessed chan int
+	customerProcessed chan int
 }
 
-// storeReportedData? || customerFeedback
 type customerFeedback struct {
 	lostCustomers          int
-	waitTime               int
+	waitTime               float64
 	numWaited              int
 	productsProcessedTotal int
 	numCustomersWProduct   int
@@ -165,37 +162,90 @@ type customerFeedback struct {
 type manager struct {
 	checkouts                []*checkout
 	checkoutTypes            []int
-	customerFeedbackChannels customerFeedbackChannels
+	customerFeedbackChannels *customerFeedbackChannels
+	checkoutLenght           int
 }
-
-// what does manager need from user? == number of chekouts (1 to 8) ; types of checkouts?
-
-// total wait time for each customer   &&   average customer wait time
-// total products processed  &&  average products per trolley
-//
-// total utilization for each checkout  ///// time spent with no customers?
-// average checkout utilisation
-
-// The number of lost customers (Customers will leave the store if they need to join a queue more than six deep)
 
 func newManager(checkouts []*checkout) *manager {
 	return &manager{
 		checkouts: checkouts,
+		//// will need to change buffer size to match number of customers spawned
+		customerFeedbackChannels: newFeedbackListeners(1000),
+		checkoutLenght:           len(checkouts),
+
 		// checkoutTypes []int
 		// checkoutTypes: checkoutTypes,
 	}
 }
 
-// TODO: Use all checkouts
+func newFeedbackListeners(bufsize int) *customerFeedbackChannels {
+	return &customerFeedbackChannels{
+		lostCustomers:     make(chan int, bufsize),
+		waitTime:          make(chan float64, bufsize),
+		productsProcessed: make(chan int, bufsize),
+	}
+}
+
+func newFeedbackTable() *customerFeedback {
+	return &customerFeedback{
+		lostCustomers:          0,
+		waitTime:               0,
+		numWaited:              0,
+		productsProcessedTotal: 0,
+		numCustomersWProduct:   0,
+	}
+}
+
 func (m *manager) lookingForQueue(customer *customerAgent) bool {
+	for i := 0; i < m.checkoutLenght; i++ {
+		//need another if for types of checkouts
+		if m.checkouts[i].register(customer) == true {
+			return true
+		}
+	}
+	return false
+}
 
-	/// try to assign customer to a queue, if unable to, return false
+//////////////////////////////////////////////////////////////////////////
 
-	// for i range := m.checkouts {
-	// Need if statement..... so that we do not queue in more than one
-	//fmt.Println(m.checkouts[0].register(customer))
-	// }
-	return m.checkouts[0].register(customer)
+type weather struct {
+	customerGeneratorRate int
+	stop                  bool
+}
+
+/// int needs to be between 0 - 60
+func newWeatherAgent(rate int) *weather {
+	return &weather{
+		customerGeneratorRate: rate,
+		stop:                  false,
+	}
+}
+
+func (weather *weather) generateCustomers(manager *manager) {
+
+	/// does a 0 rate mod mean no customers?
+	if weather.customerGeneratorRate == 0 {
+		weather.stop = true
+	}
+
+	i := 0
+
+	rate := 20 + weather.customerGeneratorRate
+
+	for {
+		if weather.stop {
+			break
+		}
+
+		i = i + 1
+		time.Sleep(time.Duration(rate) * time.Millisecond)
+		customer := &customerAgent{id: "a" + strconv.Itoa(i)}
+		go customer.activateCustomer(manager)
+	}
+}
+
+func (weather *weather) endDay() {
+	weather.stop = false
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -204,28 +254,35 @@ func main() {
 
 	//TODO: Get input from user, and with that input create weather agent and managerAgent
 
+	//TODO: define a value for max length of feedback channels, that corresponds to the number of Customers
+	//TODO: make feedback channel for checkout waitTime
+
 	// hardcode new manager for testing purposes
-	checkouts := []*checkout{newCheckout("Checkout one", 5), newCheckout("Checkout two", 5)}
+	checkouts := []*checkout{newCheckout("Checkout one", 5), newCheckout("Checkout two", 5), newCheckout("Checkout three", 5), newCheckout("Checkout four", 5), newCheckout("Checkout five", 5)}
 	manager := newManager(checkouts)
 
-	// fmt.Println(manager.checkouts[0].queueMaxLength)
-	// fmt.Println(manager.checkouts[1].queueMaxLength)
-	// fmt.Println(len(manager.checkouts))
+	weather := newWeatherAgent(1)
 
-	go manager.checkouts[0].openCheckout()
-
-	// Temporary weather agent construct //////////////////////////////
-	for i := 0; i < 10; i++ {
-
-		customer := &customerAgent{id: "a" + strconv.Itoa(i)}
-		go customer.activateCustomer(manager)
+	for i := 0; i < manager.checkoutLenght; i++ {
+		go manager.checkouts[i].openCheckout()
 	}
 
-	// Output to show that program is not frozen.
-	epochs := 30
+	go weather.generateCustomers(manager)
 
+	epochs := 10 // duration of simulation
 	for i := 0; i < epochs; i++ {
 		time.Sleep(1 * time.Second)
-		fmt.Println(".")
+		fmt.Println(".") // Output to show that program is not frozen.
 	}
+
+	weather.endDay()
+
+	println("store closed")
+	close(manager.customerFeedbackChannels.lostCustomers)
+	lostCustomersResults := 0
+
+	for i := range manager.customerFeedbackChannels.lostCustomers {
+		lostCustomersResults = lostCustomersResults + i
+	}
+	println(lostCustomersResults)
 }
