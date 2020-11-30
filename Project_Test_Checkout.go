@@ -27,16 +27,16 @@ type checkout struct {
 	name           string
 	queueMaxLength int
 	open           bool
-	cMinSpeed				 float64
-	cMaxSpeed				 float64
+	cSpeed				 float64
 	mux            sync.Mutex
 }
 
-func newCheckout(name string, queueMaxLength int) *checkout {
+func newCheckout(name string, queueMaxLength int, cSpeed float64) *checkout {
 	return &checkout{
 		name:           name,
 		queueMaxLength: queueMaxLength,
 		open:						true,
+		cSpeed: 			cSpeed,
 	}
 }
 
@@ -80,8 +80,9 @@ func (c *checkout) openCheckout(channel *chan float64) {
 
 	for c.open {
 		if len(c.observerList) > 0 {
-			// c.observerList[0].itemcount *
-			time.Sleep(1 * time.Millisecond) //TODO: here #####################################
+			// c.observerList[0].itemcount * cSpeed
+			pSpeed := float64(c.observerList[0].getItemCount()) * c.cSpeed
+			time.Sleep(time.Duration(pSpeed) * time.Millisecond)
 			c.observerList[0].update()
 			c.deregister()
 		} else {
@@ -103,6 +104,7 @@ func (i *checkout) closeCheckout() {
 type observer interface {
 	update()
 	getID() string
+	getItemCount() int
 }
 
 type customerAgent struct {
@@ -126,8 +128,10 @@ func (c *customerAgent) getID() string {
 	return c.id
 }
 
+func (c *customerAgent) getItemCount() int {
+	return c.productsAmount
+}
 
-// TODO: 	//genProductsAmount() needs to be tweaked for user input###############################################
 func (c *customerAgent) genProductsAmount(userInputMin, userInputMax int) int {
 	rand.Seed(time.Now().UnixNano())
 	c.productsAmount = rand.Intn((userInputMax - userInputMin + 1) + userInputMin)
@@ -137,8 +141,9 @@ func (c *customerAgent) genProductsAmount(userInputMin, userInputMax int) int {
 func (c *customerAgent) activateCustomer(man *manager) {
 	c.timeStart = time.Now()
 	c.customerFeedbackPointer = man.customerFeedbackChannels
-	c.genProductsAmount(1, 200)
+
 	c.patienceTime = 5 * time.Second //TODO: change patience to be random gen or userin
+	// rate = rand.Intn((weather.customerMaxGenRat - weather.customerMinGenRate + 1) + weather.customerMinGenRate)
 
 	for {
 		if man.lookingForQueue(c) {
@@ -207,9 +212,17 @@ func newFeedbackListeners(bufsize int) *customerFeedbackChannels {
 
 func (m *manager) lookingForQueue(customer *customerAgent) bool {
 	for i := 0; i < m.checkoutLenght; i++ {
-		//need another if for types of checkouts
-		if m.checkouts[i].register(customer) == true {
-			return true
+		//need to refactor how types of checkouts are implemented
+		// checkout 1 (index 0) is 5 items or less
+		if i == 0 && customer.getItemCount() < 6 {
+			if m.checkouts[i].register(customer) == true {
+				return true
+			}
+			/// catch if there is only one checkout
+		}else if i > 0 || m.checkoutLenght == 1 {
+			if m.checkouts[i].register(customer) == true {
+				return true
+			}
 		}
 	}
 	return false
@@ -281,37 +294,41 @@ func (cf *customerFeedback) printData(){
 ///////////////////////////////////////////////////////////////////////////////
 
 type weather struct {
-	customerGeneratorRate int
+	customerMaxGenRate int
+	customerMinGenRate int
 	stop                  bool
 }
 
 /// int needs to be between 0 - 60
-func newWeatherAgent(rate int) *weather {
+func newWeatherAgent(rateMax int, rateMin int) *weather {
 	return &weather{
-		customerGeneratorRate: rate,
+		customerMaxGenRate: rateMax,
+		customerMinGenRate: rateMin,
 		stop:                  false,
 	}
 }
 
-func (weather *weather) generateCustomers(manager *manager, wg sync.WaitGroup) {
+func (weather *weather) generateCustomers(manager *manager, wg sync.WaitGroup, prodMin int, prodMax int) {
+	rate := 1
 	/// does a 0 rate mod mean no customers? We are assuming yes here.
-	if weather.customerGeneratorRate == 0 {
+	if weather.customerMaxGenRate == 0 {
 		weather.stop = true
+	}else{
+		// higher means faster, must reduce pause rate value by input
+		rate = 70 - rand.Intn((weather.customerMaxGenRate - weather.customerMinGenRate + 1) + weather.customerMinGenRate)
 	}
 
 	i := 0
-
-	rate := 20 + weather.customerGeneratorRate
 
 	for {
 		if weather.stop {
 			break
 		}
-
 		i = i + 1
 		time.Sleep(time.Duration(rate) * time.Millisecond)
 		wg.Add(1)
 		customer := &customerAgent{id: "a" + strconv.Itoa(i)}
+		customer.genProductsAmount(prodMin, prodMax)
 		go customer.activateCustomer(manager)
 	}
 }
@@ -325,9 +342,10 @@ func (weather *weather) endDay() {
 func main() {
 /////////////////// User Input Section /////////////////////////////////////
 	var checkoutInput int64 = 0
-  var customerEntryRate int64 = 0
-  var checkoutSpeed float64 = 0.0
-  var rateInput int64 = 0
+  var customerMaxEntryRate int64 = 0
+	var customerMinEntryRate int64 = 0
+  var checkoutMaxSpeed float64 = 0.0
+	var checkoutMinSpeed float64 = 0.0
 	var minProdRange int64 = 0
 	var maxProdRange int64 = 0
 
@@ -369,38 +387,57 @@ func main() {
 				}
 		}
 
-    print("Enter checkout speed, from .5 to 6: ")
+    print("Enter checkout min speed, from .5 to 6: ")
     for scanner.Scan() {
         input, _ := strconv.ParseFloat(scanner.Text(), 64)
         if input < 0.5 || input > 6 {
             print("Incorrect Input, can only time between .5 to 6: ")
         } else {
-					checkoutSpeed = input
+					checkoutMinSpeed = input
             break
         }
     }
+		print("Enter checkout max speed, from .5 to 6: ")
+		for scanner.Scan() {
+				input, _ := strconv.ParseFloat(scanner.Text(), 64)
+				if input < 0.5 || input > 6 {
+						print("Incorrect Input, can only time between .5 to 6: ")
+				} else {
+					checkoutMaxSpeed = input
+						break
+				}
+		}
 
-    print("Enter rate of customer spawn, from 20 to 60: ")
+    print("Enter maximum rate of customer spawn, from 0 to 60: ")
     for scanner.Scan() {
         input, _ := strconv.ParseInt(scanner.Text(), 10, 64)
-        if input < 20 || input > 60 {
+        if input < 0 || input > 60 {
             print("Incorrect Input, can only accept number in range of 20 to 60: ")
         } else {
-					customerEntryRate = input
+					customerMaxEntryRate = input
 					break
         }
     }
 
-		println(checkoutSpeed)
-		println( customerEntryRate + minProdRange + maxProdRange + rateInput)
+		print("Enter minimum rate of customer spawn, from 0 to 60: ")
+		for scanner.Scan() {
+				input, _ := strconv.ParseInt(scanner.Text(), 10, 64)
+				if input < 0 || input > 60 {
+						print("Incorrect Input, can only accept number in range of 20 to 60: ")
+				} else {
+					customerMinEntryRate = input
+					break
+				}
+		}
 ////////////////////////////////////////////////////////////////////////////////
 	var wg sync.WaitGroup
-
+	var checkoutSpeed float64 = 0.0
 	checkouts := [8]*checkout {}
 
 	var i int64 = 0
 	for i=0; i < checkoutInput; i++ {
-		checkouts[i] = newCheckout(strconv.FormatInt((i + 1), 10), 6)
+		checkoutSpeed = (checkoutMinSpeed+(rand.Float64()*(checkoutMaxSpeed - checkoutMinSpeed)))
+		checkouts[i] = newCheckout(strconv.FormatInt((i + 1), 10), 6, checkoutSpeed)
 	}
 	println("####################### Begin #########################")
 
@@ -408,15 +445,19 @@ func main() {
 
 	manager := newManager(checkoutSlice)
 
-	///TODO: #####################################################################
-	weather := newWeatherAgent(10)
-	//	print(int(rateInput))
+	////////////////////////////////////////////// set up checkout to be 5 items or less
+
+	newCustEnRaMa, _ := strconv.Atoi(strconv.FormatInt(customerMaxEntryRate, 10))
+	newCustEnRaMi, _ := strconv.Atoi(strconv.FormatInt(customerMinEntryRate, 10))
+	weather := newWeatherAgent(newCustEnRaMa, newCustEnRaMi)
 
 	for i := 0; i < manager.checkoutLenght; i++ {
 		go manager.checkouts[i].openCheckout(&manager.checkoutFeedbackChannels[i])
 	}
 
-	go weather.generateCustomers(manager, wg)
+	newCustItMa, _ := strconv.Atoi(strconv.FormatInt(maxProdRange, 10))
+	newCustItMi, _ := strconv.Atoi(strconv.FormatInt(minProdRange, 10))
+	go weather.generateCustomers(manager, wg, newCustItMi, newCustItMa)
 
 	/// 18 hours open time 6 hours closed
 	epochs := 18 // duration of simulation
@@ -473,4 +514,5 @@ func main() {
 	feedbackData.printData()
 
 }
+
 
